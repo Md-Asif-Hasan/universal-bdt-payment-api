@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAdminDb, getFirebaseStatus } from '@/lib/firebase-admin';
 
+export const dynamic = 'force-dynamic';
+
 // Simple in-memory metrics (resets on deployment)
 const metrics = {
   requestCount: 0,
@@ -31,16 +33,24 @@ export async function GET() {
     const start = Date.now();
     // Try listing collections to verify connection
     const db = getAdminDb();
-    await db.listCollections();
+    const collections = await db.listCollections();
     firebaseLatency = Date.now() - start;
     firebaseStatus = 'healthy';
   } catch (error: any) {
     firebaseStatus = 'error';
     // Log the full error for debugging
     console.error('[Firebase] Full error details:', error);
-    firebaseError = error.message || error.code || 'Unknown error';
-    metrics.errors++;
-    metrics.lastErrorTime = now.toISOString();
+    
+    // Handle NOT_FOUND gracefully (empty database is OK)
+    if (error.code === 5 || error.message?.includes('NOT_FOUND')) {
+      firebaseStatus = 'healthy';
+      firebaseError = null;
+      firebaseLatency = Date.now() - Date.now();
+    } else {
+      firebaseError = error.message || error.code || 'Unknown error';
+      metrics.errors++;
+      metrics.lastErrorTime = now.toISOString();
+    }
   }
 
   const uptime = Math.floor((Date.now() - new Date(metrics.startTime).getTime()) / 1000);

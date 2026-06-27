@@ -47,8 +47,13 @@ function initializeFirebaseAdmin() {
 
 export function getAdminDb(): admin.firestore.Firestore {
   if (!adminDb) {
-    initializeFirebaseAdmin();
-    adminDb = admin.firestore();
+    try {
+      initializeFirebaseAdmin();
+      adminDb = admin.firestore();
+    } catch (error) {
+      // Re-throw to let caller handle the error
+      throw error;
+    }
   }
   return adminDb;
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 
+export const dynamic = 'force-dynamic';
+
 // Verify authentication from Cloudflare Worker
 function verifyAuth(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization');
