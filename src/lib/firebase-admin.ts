@@ -12,14 +12,21 @@ function initializeFirebaseAdmin() {
       const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
       const privateKey = process.env.FIREBASE_PRIVATE_KEY;
 
+      console.log('[Firebase] Checking env vars...');
+      console.log(`  FIREBASE_PROJECT_ID: ${projectId ? 'SET' : 'MISSING'}`);
+      console.log(`  FIREBASE_CLIENT_EMAIL: ${clientEmail ? 'SET' : 'MISSING'}`);
+      console.log(`  FIREBASE_PRIVATE_KEY: ${privateKey ? 'SET (length: ' + privateKey.length + ')' : 'MISSING'}`);
+
       if (!projectId || !clientEmail || !privateKey) {
         throw new Error(
-          'Missing Firebase credentials. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables.'
+          `Missing Firebase credentials. FIREBASE_PROJECT_ID=${!!projectId}, FIREBASE_CLIENT_EMAIL=${!!clientEmail}, FIREBASE_PRIVATE_KEY=${!!privateKey}`
         );
       }
 
       // Replace escaped newlines with actual newlines for Vercel
       const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+
+      console.log('[Firebase] Initializing with cert...');
 
       admin.initializeApp({
         credential: admin.credential.cert({
