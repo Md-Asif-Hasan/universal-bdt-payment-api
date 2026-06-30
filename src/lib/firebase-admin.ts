@@ -44,10 +44,9 @@ export function getAdminDb(): admin.firestore.Firestore {
   try {
     const app = getOrInitApp();
 
-    // Use the modular getFirestore() API — it correctly resolves the database
-    // location from the project metadata, avoiding the us-central1 default
-    // that causes "5 NOT_FOUND" for databases in other regions (e.g. asia-southeast1).
-    _db = getFirestore(app);
+    // Use the modular getFirestore() API with explicit databaseId "(default)"
+    // This ensures the SDK connects to the default Firestore database
+    _db = getFirestore(app, '(default)');
 
     const settings: Settings = {
       ignoreUndefinedProperties: true,
@@ -56,6 +55,7 @@ export function getAdminDb(): admin.firestore.Firestore {
     };
     _db.settings(settings);
 
+    console.log('[Firebase] Firestore initialized with databaseId: (default)');
     return _db;
   } catch (err) {
     initError = err instanceof Error ? err : new Error(String(err));
