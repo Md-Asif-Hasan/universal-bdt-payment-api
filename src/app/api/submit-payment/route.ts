@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { testStore, isTestToken } from '@/lib/test-store';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
+    const authHeader = request.headers.get('authorization');
     const body = await request.json();
     const { requestId, trxId } = body;
 
@@ -12,6 +14,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'requestId and trxId are required' }, { status: 400 });
     }
 
+    // ── TEST MODE ─────────────────────────────────────────────────────────────
+    if (isTestToken(authHeader)) {
+      const result = testStore.submitTrxId(requestId, trxId);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });
+      }
+      return NextResponse.json({ success: true, message: 'TrxID submitted for verification' });
+    }
+
+    // ── PRODUCTION MODE ───────────────────────────────────────────────────────
     const db = getAdminDb();
     const paymentRef = db.collection('payment_requests').doc(requestId);
     const paymentDoc = await paymentRef.get();
@@ -31,10 +43,7 @@ export async function POST(request: NextRequest) {
       submittedAt: new Date().toISOString(),
     });
 
-    return NextResponse.json({
-      success: true,
-      message: 'TrxID submitted for verification',
-    });
+    return NextResponse.json({ success: true, message: 'TrxID submitted for verification' });
   } catch (error) {
     console.error('Submit payment error:', error);
     return NextResponse.json(

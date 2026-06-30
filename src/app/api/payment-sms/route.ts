@@ -1,75 +1,140 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { testStore } from '@/lib/test-store';
 
 export const dynamic = 'force-dynamic';
 
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function calculateEndDate(plan: string): string {
+  const now = new Date();
+  switch (plan) {
+    case 'monthly':   now.setMonth(now.getMonth() + 1);        break;
+    case 'quarterly': now.setMonth(now.getMonth() + 3);        break;
+    case 'yearly':    now.setFullYear(now.getFullYear() + 1);  break;
+    case 'lifetime':  now.setFullYear(now.getFullYear() + 100); break;
+    default:          now.setMonth(now.getMonth() + 1);
+  }
+  return now.toISOString();
+}
+
+// ─── POST /api/payment-sms ────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('x-bridge-key');
-    
-    // Verify bridge secret key
-    if (!authHeader || authHeader !== process.env.BRIDGE_SECRET_KEY) {
+    // 1. Auth check — bridge secret key
+    const bridgeKey = request.headers.get('x-bridge-key');
+    if (!bridgeKey || bridgeKey !== process.env.BRIDGE_SECRET_KEY) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // 2. Parse body
     const body = await request.json();
     const { provider, amount, trxId, sender, rawMessage } = body;
 
-    if (!provider || !amount || !trxId) {
-      return NextResponse.json({ error: 'provider, amount, and trxId are required' }, { status: 400 });
+    if (!provider || amount == null || !trxId) {
+      return NextResponse.json(
+        { error: 'provider, amount, and trxId are required' },
+        { status: 400 },
+      );
     }
 
+    const numericAmount = Number(amount);
+
+    // 3. ── TEST MODE ─────────────────────────────────────────────────────────
+    //    Try in-memory test store first. If there is a matching awaiting_verification
+    //    request we complete the test flow without touching Firestore.
+    const testResult = testStore.verifyBySms(trxId, numericAmount, provider, sender, rawMessage);
+    if (testResult.ok) {
+      return NextResponse.json({
+        success: true,
+        message: 'Payment verified and subscription activated (test mode)',
+        data: {
+          requestId: testResult.requestId,
+          userId:    testResult.userId,
+          plan:      testResult.plan,
+          mode:      'test',
+        },
+      });
+    }
+    if (testResult.duplicate) {
+      return NextResponse.json({ error: 'Payment already verified' }, { status: 409 });
+    }
+
+    // 4. ── PRODUCTION MODE ────────────────────────────────────────────────────
     const db = getAdminDb();
-    
-    // Find matching payment request
-    const paymentRef = db.collection('payment_requests')
-      .where('amount', '==', amount)
+
+    // Find matching payment request by amount + awaiting_verification
+    const snapshot = await db
+      .collection('payment_requests')
+      .where('amount', '==', numericAmount)
       .where('status', '==', 'awaiting_verification')
-      .limit(1);
-    
-    const snapshot = await paymentRef.get();
+      .limit(1)
+      .get();
 
     if (snapshot.empty) {
-      return NextResponse.json({ error: 'No matching payment request found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'No matching payment request found for this amount' },
+        { status: 404 },
+      );
     }
 
-    const paymentDoc = snapshot.docs[0];
+    const paymentDoc  = snapshot.docs[0];
     const paymentData = paymentDoc.data();
 
-    // Check if already processed
     if (paymentData.status === 'verified') {
       return NextResponse.json({ error: 'Payment already verified' }, { status: 409 });
     }
 
-    // Update payment status
+    const verifiedAt = new Date().toISOString();
+    const endDate    = calculateEndDate(paymentData.plan);
+
+    // Mark payment request as verified
     await paymentDoc.ref.update({
-      status: 'verified',
-      verifiedAt: new Date().toISOString(),
+      status:     'verified',
+      verifiedAt,
       trxId,
       provider,
       sender,
       rawMessage,
     });
 
-    // Create or update subscription
+    // Upsert subscription record
     const subscriptionRef = db.collection('subscriptions').doc(paymentData.userId);
-    const subscriptionDoc = await subscriptionRef.get();
-
+    const subscriptionSnap = await subscriptionRef.get();
     const subscriptionData = {
-      userId: paymentData.userId,
-      plan: paymentData.plan,
-      status: 'active',
-      startDate: new Date().toISOString(),
-      // Calculate end date based on plan
-      endDate: calculateEndDate(paymentData.plan),
-      amount: paymentData.amount,
+      userId:           paymentData.userId,
+      plan:             paymentData.plan,
+      status:           'active',
+      startDate:        verifiedAt,
+      endDate,
+      amount:           paymentData.amount,
       paymentRequestId: paymentDoc.id,
     };
-
-    if (subscriptionDoc.exists) {
+    if (subscriptionSnap.exists) {
       await subscriptionRef.update(subscriptionData);
     } else {
       await subscriptionRef.set(subscriptionData);
+    }
+
+    // ── Update user premium flag in the main users collection ──────────────
+    // The main taka-jachai-modern app reads users/{uid}.premium and
+    // users/{uid}.premiumUntil to gate premium features.
+    try {
+      const userRef = db.collection('users').doc(paymentData.userId);
+      await userRef.set(
+        {
+          premium:      true,
+          premiumUntil: endDate,
+          premiumPlan:  paymentData.plan,
+          updatedAt:    verifiedAt,
+        },
+        { merge: true }, // don't overwrite other user fields
+      );
+      console.log(`[payment-sms] Updated premium flag for user: ${paymentData.userId}`);
+    } catch (userUpdateErr) {
+      // Log but don't fail the request — payment is verified, flag update is best-effort
+      console.error('[payment-sms] Failed to update user premium flag:', userUpdateErr);
     }
 
     return NextResponse.json({
@@ -77,36 +142,16 @@ export async function POST(request: NextRequest) {
       message: 'Payment verified and subscription activated',
       data: {
         requestId: paymentDoc.id,
-        userId: paymentData.userId,
-        plan: paymentData.plan,
+        userId:    paymentData.userId,
+        plan:      paymentData.plan,
+        endDate,
       },
     });
   } catch (error) {
-    console.error('Payment SMS error:', error);
+    console.error('[payment-sms] Error:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to process payment SMS' },
-      { status: 500 }
+      { status: 500 },
     );
   }
-}
-
-function calculateEndDate(plan: string): string {
-  const now = new Date();
-  switch (plan) {
-    case 'monthly':
-      now.setMonth(now.getMonth() + 1);
-      break;
-    case 'quarterly':
-      now.setMonth(now.getMonth() + 3);
-      break;
-    case 'yearly':
-      now.setFullYear(now.getFullYear() + 1);
-      break;
-    case 'lifetime':
-      now.setFullYear(now.getFullYear() + 100);
-      break;
-    default:
-      now.setMonth(now.getMonth() + 1);
-  }
-  return now.toISOString();
 }
