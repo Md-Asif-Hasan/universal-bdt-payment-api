@@ -46,19 +46,18 @@ export function getAdminDb(): admin.firestore.Firestore {
     const app = getOrInitApp();
 
     // Try multiple approaches to connect to Firestore
-    // First try without databaseId (let SDK auto-detect)
+    // First try "default" (without parentheses) as identified by user
     try {
-      _db = getFirestore(app);
+      _db = getFirestore(app, 'default');
       const settings: Settings = {
         ignoreUndefinedProperties: true,
         preferRest: true,
       };
       _db.settings(settings);
-      console.log('[Firebase] Firestore initialized (auto-detect database)');
-    } catch (autoErr: any) {
-      console.warn('[Firebase] Auto-detect failed, trying explicit (default):', autoErr.message);
-      console.warn('[Firebase] Auto-detect error code:', autoErr.code);
-      // Fallback to explicit "(default)" databaseId
+      console.log('[Firebase] Firestore initialized with databaseId: default');
+    } catch (defaultErr: any) {
+      console.warn('[Firebase] "default" failed, trying (default):', defaultErr.message);
+      // Fallback to "(default)" with parentheses
       try {
         _db = getFirestore(app, '(default)');
         const settings: Settings = {
@@ -66,12 +65,24 @@ export function getAdminDb(): admin.firestore.Firestore {
           preferRest: true,
         };
         _db.settings(settings);
-        console.log('[Firebase] Firestore initialized with explicit databaseId: (default)');
-      } catch (explicitErr: any) {
-        console.error('[Firebase] Explicit (default) also failed:', explicitErr.message);
-        console.error('[Firebase] Explicit error code:', explicitErr.code);
-        console.error('[Firebase] Full error:', JSON.stringify(explicitErr, null, 2));
-        throw explicitErr;
+        console.log('[Firebase] Firestore initialized with databaseId: (default)');
+      } catch (parenthesesErr: any) {
+        console.warn('[Firebase] (default) failed, trying auto-detect:', parenthesesErr.message);
+        // Final fallback: auto-detect
+        try {
+          _db = getFirestore(app);
+          const settings: Settings = {
+            ignoreUndefinedProperties: true,
+            preferRest: true,
+          };
+          _db.settings(settings);
+          console.log('[Firebase] Firestore initialized (auto-detect)');
+        } catch (autoErr: any) {
+          console.error('[Firebase] All methods failed:', autoErr.message);
+          console.error('[Firebase] Error code:', autoErr.code);
+          console.error('[Firebase] Full error:', JSON.stringify(autoErr, null, 2));
+          throw autoErr;
+        }
       }
     }
 
