@@ -19,11 +19,37 @@ export async function POST(request: NextRequest) {
 
     // ── TEST MODE ─────────────────────────────────────────────────────────────
     if (forceTest || isTestToken(authHeader)) {
+      // First try test store
       const result = await testStore.submitTrxId(requestId, trxId, senderNumber);
-      if (!result.ok) {
-        return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });
+      if (result.ok) {
+        return NextResponse.json({ success: true, message: 'TrxID submitted for verification' });
       }
-      return NextResponse.json({ success: true, message: 'TrxID submitted for verification' });
+      
+      // If not found in test store, fall back to production collection (for backward compatibility)
+      if (result.error === 'Payment request not found') {
+        const db = getAdminDb();
+        const paymentRef = db.collection('payment_requests').doc(requestId);
+        const paymentDoc = await paymentRef.get();
+
+        if (paymentDoc.exists) {
+          const paymentData = paymentDoc.data();
+          if (paymentData?.status !== 'pending') {
+            return NextResponse.json({ error: 'Payment request is not in pending status' }, { status: 400 });
+          }
+
+          await paymentRef.update({
+            status: 'awaiting_verification',
+            trxId,
+            senderNumber,
+            amount: amount || paymentData.amount,
+            submittedAt: new Date().toISOString(),
+          });
+
+          return NextResponse.json({ success: true, message: 'TrxID submitted for verification' });
+        }
+      }
+      
+      return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });
     }
 
     // ── PRODUCTION MODE ───────────────────────────────────────────────────────
