@@ -15,7 +15,7 @@ export async function GET(
 
     // ── TEST MODE — detected by requestId prefix or forceTest param ───────────
     if (forceTest || requestId.startsWith('test_')) {
-      const req = testStore.getPayment(requestId);
+      const req = await testStore.getPayment(requestId);
       if (!req) {
         return NextResponse.json({ error: 'Payment request not found' }, { status: 404 });
       }
