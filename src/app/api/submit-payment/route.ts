@@ -8,15 +8,15 @@ export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
     const body = await request.json();
-    const { requestId, trxId } = body;
+    const { requestId, trxId, senderNumber, amount } = body;
 
-    if (!requestId || !trxId) {
-      return NextResponse.json({ error: 'requestId and trxId are required' }, { status: 400 });
+    if (!requestId || !trxId || !senderNumber) {
+      return NextResponse.json({ error: 'requestId, trxId, and senderNumber are required' }, { status: 400 });
     }
 
     // ── TEST MODE ─────────────────────────────────────────────────────────────
     if (isTestToken(authHeader)) {
-      const result = testStore.submitTrxId(requestId, trxId);
+      const result = testStore.submitTrxId(requestId, trxId, senderNumber);
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });
       }
@@ -40,6 +40,8 @@ export async function POST(request: NextRequest) {
     await paymentRef.update({
       status: 'awaiting_verification',
       trxId,
+      senderNumber,
+      amount: amount || paymentData.amount,
       submittedAt: new Date().toISOString(),
     });
 

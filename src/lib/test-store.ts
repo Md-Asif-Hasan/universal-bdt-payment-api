@@ -13,6 +13,7 @@ export interface TestPaymentRequest {
   createdAt: string;
   expiresAt: string;
   trxId?: string;
+  senderNumber?: string;
   submittedAt?: string;
   verifiedAt?: string;
   provider?: string;
@@ -84,12 +85,13 @@ export const testStore = {
     return paymentRequests.get(id);
   },
 
-  submitTrxId(id: string, trxId: string): { ok: boolean; error?: string } {
+  submitTrxId(id: string, trxId: string, senderNumber?: string): { ok: boolean; error?: string } {
     const req = paymentRequests.get(id);
     if (!req) return { ok: false, error: 'Payment request not found' };
     if (req.status !== 'pending') return { ok: false, error: `Payment is already ${req.status}` };
     req.status = 'awaiting_verification';
     req.trxId = trxId;
+    req.senderNumber = senderNumber;
     req.submittedAt = new Date().toISOString();
     paymentRequests.set(id, req);
     return { ok: true };
@@ -98,11 +100,21 @@ export const testStore = {
   verifyBySms(trxId: string, amount: number, provider: string, sender: string, rawMessage: string): {
     ok: boolean; error?: string; duplicate?: boolean; requestId?: string; userId?: string; plan?: string;
   } {
+    // Normalize phone numbers for comparison
+    const normalizePhone = (phone: string) => phone.replace(/[\s-]/g, '').replace(/^0/, '880').slice(-11);
+
     // Find awaiting_verification request matching the amount
     for (const [id, req] of paymentRequests.entries()) {
       if (req.status === 'awaiting_verification' && req.amount === amount) {
         // If a trxId was submitted, verify it matches
         if (req.trxId && req.trxId !== trxId) continue;
+
+        // Verify sender number matches if both are present
+        if (req.senderNumber && sender) {
+          const normalizedStoredSender = normalizePhone(req.senderNumber);
+          const normalizedSmsSender = normalizePhone(sender);
+          if (normalizedStoredSender !== normalizedSmsSender) continue;
+        }
 
         req.status = 'verified';
         req.verifiedAt = new Date().toISOString();
@@ -131,7 +143,7 @@ export const testStore = {
         return { ok: false, duplicate: true, error: 'Payment already verified' };
       }
     }
-    return { ok: false, error: 'No matching awaiting_verification request found for this amount' };
+    return { ok: false, error: 'No matching awaiting_verification request found for this amount and sender' };
   },
 
   expireSubscription(userId: string): { ok: boolean; error?: string; expiredAt?: string } {

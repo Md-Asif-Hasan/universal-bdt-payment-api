@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       .collection('payment_requests')
       .where('amount', '==', numericAmount)
       .where('status', '==', 'awaiting_verification')
-      .limit(1)
+      .limit(10)
       .get();
 
     if (snapshot.empty) {
@@ -79,8 +79,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const paymentDoc  = snapshot.docs[0];
-    const paymentData = paymentDoc.data();
+    // Cross-check TrxID and sender number to find the exact match
+    let paymentDoc = null;
+    let paymentData = null;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      // Normalize phone numbers (remove spaces, dashes, ensure 11 digits)
+      const normalizePhone = (phone: string) => phone.replace(/[\s-]/g, '').replace(/^0/, '880').slice(-11);
+      const normalizedSender = normalizePhone(sender || '');
+      const normalizedStoredSender = normalizePhone(data.senderNumber || '');
+
+      if (data.trxId === trxId && normalizedSender === normalizedStoredSender) {
+        paymentDoc = doc;
+        paymentData = data;
+        break;
+      }
+    }
+
+    if (!paymentDoc || !paymentData) {
+      return NextResponse.json(
+        { error: 'TrxID or sender number does not match any pending payment request' },
+        { status: 400 },
+      );
+    }
 
     if (paymentData.status === 'verified') {
       return NextResponse.json({ error: 'Payment already verified' }, { status: 409 });
