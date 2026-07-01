@@ -60,6 +60,83 @@ export async function POST(request: NextRequest) {
     if (testResult.duplicate) {
       return NextResponse.json({ error: 'Payment already verified' }, { status: 409 });
     }
+    
+    // If not found in test store, fall back to production collection (for backward compatibility)
+    if (testResult.error === 'No matching awaiting_verification request found for this amount and sender') {
+      const db = getAdminDb();
+      const snapshot = await db
+        .collection('payment_requests')
+        .where('amount', '==', numericAmount)
+        .where('status', '==', 'awaiting_verification')
+        .limit(10)
+        .get();
+
+      if (!snapshot.empty) {
+        // Cross-check TrxID and sender number to find the exact match
+        let paymentDoc = null;
+        let paymentData = null;
+
+        for (const doc of snapshot.docs) {
+          const data = doc.data();
+          const normalizePhone = (phone: string) => phone.replace(/[\s-]/g, '').replace(/^0/, '880').slice(-11);
+          const normalizedSender = normalizePhone(sender || '');
+          const normalizedStoredSender = normalizePhone(data.senderNumber || '');
+
+          if (data.trxId === trxId && normalizedSender === normalizedStoredSender) {
+            paymentDoc = doc;
+            paymentData = data;
+            break;
+          }
+        }
+
+        if (paymentDoc && paymentData) {
+          if (paymentData.status === 'verified') {
+            return NextResponse.json({ error: 'Payment already verified' }, { status: 409 });
+          }
+
+          const verifiedAt = new Date().toISOString();
+          const endDate = calculateEndDate(paymentData.plan);
+
+          await paymentDoc.ref.update({
+            status: 'verified',
+            verifiedAt,
+            trxId,
+            provider,
+            sender,
+            rawMessage,
+          });
+
+          const subscriptionRef = db.collection('subscriptions').doc(paymentData.userId);
+          const subscriptionSnap = await subscriptionRef.get();
+          const subscriptionData = {
+            userId: paymentData.userId,
+            plan: paymentData.plan,
+            status: 'active',
+            startDate: verifiedAt,
+            endDate,
+            amount: paymentData.amount,
+            paymentRequestId: paymentDoc.id,
+          };
+          if (subscriptionSnap.exists) {
+            await subscriptionRef.update(subscriptionData);
+          } else {
+            await subscriptionRef.set(subscriptionData);
+          }
+
+          return NextResponse.json({
+            success: true,
+            message: 'Payment verified and subscription activated (production fallback)',
+            data: {
+              requestId: paymentDoc.id,
+              userId: paymentData.userId,
+              plan: paymentData.plan,
+              endDate,
+              mode: 'production_fallback',
+            },
+          });
+        }
+      }
+    }
 
     // 4. ── PRODUCTION MODE ────────────────────────────────────────────────────
     const db = getAdminDb();
