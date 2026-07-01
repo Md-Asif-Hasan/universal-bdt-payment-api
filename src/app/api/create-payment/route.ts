@@ -17,6 +17,13 @@ function getPlanAmount(plan: string): number {
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
+    const url = new URL(request.url);
+    const forceTest = url.searchParams.get('forceTest') === 'true';
+    
+    console.log('[create-payment] forceTest param:', forceTest);
+    console.log('[create-payment] authHeader:', authHeader?.substring(0, 50) + '...');
+    console.log('[create-payment] isTestToken:', isTestToken(authHeader));
+    
     const body = await request.json();
     const { plan, userId: bodyUserId } = body;
 
@@ -25,9 +32,11 @@ export async function POST(request: NextRequest) {
     }
 
     // ── TEST MODE (no Firestore needed) ──────────────────────────────────────
-    if (isTestToken(authHeader)) {
+    if (forceTest || isTestToken(authHeader)) {
+      console.log('[create-payment] Using TEST MODE');
       const userId = getTestUserId(authHeader) || bodyUserId || 'test_user';
       const req = testStore.createPayment(plan, userId);
+      console.log('[create-payment] Created request:', req.id);
       return NextResponse.json({
         success: true,
         data: {
@@ -35,6 +44,10 @@ export async function POST(request: NextRequest) {
           ...req,
           expiry: req.expiresAt,
         },
+      });
+    }
+
+    console.log('[create-payment] Using PRODUCTION MODE');
       });
     }
 

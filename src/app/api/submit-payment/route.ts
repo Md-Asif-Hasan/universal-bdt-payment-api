@@ -7,6 +7,9 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('authorization');
+    const url = new URL(request.url);
+    const forceTest = url.searchParams.get('forceTest') === 'true';
+    
     const body = await request.json();
     const { requestId, trxId, senderNumber, amount } = body;
 
@@ -15,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── TEST MODE ─────────────────────────────────────────────────────────────
-    if (isTestToken(authHeader)) {
+    if (forceTest || isTestToken(authHeader)) {
       const result = testStore.submitTrxId(requestId, trxId, senderNumber);
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.error === 'Payment request not found' ? 404 : 400 });

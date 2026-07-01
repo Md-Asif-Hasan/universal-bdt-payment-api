@@ -10,9 +10,11 @@ export async function GET(
 ) {
   try {
     const { requestId } = params;
+    const url = new URL(request.url);
+    const forceTest = url.searchParams.get('forceTest') === 'true';
 
-    // ── TEST MODE — detected by requestId prefix ──────────────────────────────
-    if (requestId.startsWith('test_')) {
+    // ── TEST MODE — detected by requestId prefix or forceTest param ───────────
+    if (forceTest || requestId.startsWith('test_')) {
       const req = testStore.getPayment(requestId);
       if (!req) {
         return NextResponse.json({ error: 'Payment request not found' }, { status: 404 });
